@@ -25,12 +25,16 @@ pub enum ChessError {
     DestinationSquareBlocked,
 
     #[error("the move was illegal")]
-    InvalidMove,
+    IllegalMove,
 }
 
 /// Result type for functions in this module.
 pub type ChessResult<T> = Result<T, ChessError>;
 
+/// Type for representing piece indexes, (rank, file) indexed from 0 to 7. Probably the least safe
+/// part of this setup, but it's the simplest way, so we just have to check it's legal when we use
+/// it.
+pub type PieceIndex = (usize, usize);
 
 /// An enum for representing the color of each side.
 #[repr(u8)]
@@ -108,10 +112,10 @@ impl Piece {
 #[derive(Debug, Eq, PartialEq)]
 pub struct UciMove {
     /// Index of the source square in the order (rank, file).
-    pub source: (usize, usize),
+    pub source: PieceIndex,
 
     /// Index of the source square in the order (rank, file).
-    pub dest: (usize, usize),
+    pub dest: PieceIndex,
 }
 
 impl UciMove {
@@ -175,7 +179,7 @@ pub struct Position {
     pub side_to_move: Color,
 
     /// The square that allows for en-passant, if any.
-    pub on_passant_square: Option<usize>,
+    pub en_passant_square: Option<PieceIndex>,
 
     /// Whether white can castle kingside.
     pub white_can_castle_kingside: bool,
@@ -193,7 +197,7 @@ pub struct Position {
 impl Position {
     /// Access a square by index (rank and then file, as in algebraic notation). Out of bounds
     /// indices will return an InvalidSquareIndex error.
-    pub fn at(&self, (rank, file): (usize, usize)) -> ChessResult<Piece> {
+    pub fn at(&self, (rank, file): PieceIndex) -> ChessResult<Piece> {
         if rank >= 8 || file >= 8 {
             Err(ChessError::InvalidSquareIndex(rank, file))
         }
@@ -203,7 +207,7 @@ impl Position {
     }
 
     /// Set the piece at a given index.
-    pub fn set_at(&mut self, (rank, file): (usize, usize), piece: Piece) -> ChessResult<()> {
+    pub fn set_at(&mut self, (rank, file): PieceIndex, piece: Piece) -> ChessResult<()> {
         if rank >= 8 || file >= 8 {
             Err(ChessError::InvalidSquareIndex(rank, file))
         }
@@ -211,6 +215,125 @@ impl Position {
             self.pieces[rank * 8 + file] = piece;
             Ok(())
         }
+    }
+
+    /// Check whether a give move is legal.
+    /// TODO: Some of the code is a bit nasty, it might be worth simplifying it if possible once
+    /// it's implemented.
+    /// TODO: support en-passant and castling.
+    pub fn is_move_legal(&self, mov: &UciMove) -> ChessResult<bool> {
+        use Piece::*;
+
+        let source = mov.source;
+        let dest = mov.dest;
+
+        // Check index validity.
+        if source.0 > 7 {
+            return Err(ChessError::InvalidSquareIndex(source.0, source.1));
+        }
+        if source.1 > 7 {
+            return Err(ChessError::InvalidSquareIndex(source.0, source.1));
+        }
+        if dest.0 > 7 {
+            return Err(ChessError::InvalidSquareIndex(dest.0, dest.1));
+        }
+        if dest.1 > 7 {
+            return Err(ChessError::InvalidSquareIndex(dest.0, dest.1));
+        }
+
+        // Get source piece.
+        let source_piece = self.at(source)?;
+
+        if source_piece.color() != Some(self.side_to_move) {
+            return Err(ChessError::WrongSide);
+        }
+
+        // Get the opposite color.
+        let opposite_color = if self.side_to_move == Color::White { Color::Black } else { Color::White };
+
+        // Check move validity.
+        match source_piece {
+            WhitePawn | BlackPawn => {
+                // The passing rank (the one right in front of a pawn).
+                let passing_rank = if self.side_to_move == Color::White { source.0 + 1 } else { source.0 - 1 };
+
+                // Pawns can never move from the 1st or 8th rank. This also prevents some overflows
+                // later.
+                if source.0 > 0 && source.0 < 7 {
+                    // Check moves along the same file (regular moves).
+                    if source.1 == dest.1 {
+                        let move_dist = dest.0 as i32 - source.0 as i32;
+                        let relative_move_dist = if self.side_to_move == Color::White { move_dist } else { -move_dist };
+
+                        // It should be possible to move one square forward, as long as the destination
+                        // square is unobstructed.
+                        if relative_move_dist == 1 && self.at(dest)? == EmptySquare {
+                            return Ok(true);
+                        }
+
+                        // It should also be possible to move two squares forward, as long as both
+                        // squares are unobstructed.
+                        if relative_move_dist == 2 {
+                            let passing_square = (passing_rank, source.1);
+                            if self.at(dest)? == EmptySquare && self.at(passing_square)? == EmptySquare {
+                                return Ok(true);
+                            }
+                        }
+                    }
+
+                    // Check captures to the left.
+                    if source.1 > 0 && dest.1 == source.1 - 1 && dest.0 == passing_rank {
+                        // Check that the square contains an opponent's piece.
+                        if self.at(dest)?.color() == Some(opposite_color) || self.en_passant_square == Some(dest) {
+                            return Ok(true);
+                        }
+                    }
+
+                    // Check captures to the right.
+                    if source.1 < 7 && dest.1 == source.1 + 1 && dest.0 == passing_rank {
+                        // Check that the square contains an opponent's piece.
+                        if self.at(dest)?.color() == Some(opposite_color) || self.en_passant_square == Some(dest) {
+                            return Ok(true);
+                        }
+                    }
+                }
+
+                // Otherwise, it's not a valid move.
+                Ok(false)
+            },
+            // TODO: switch to false, only set to true for testing.
+            _ => Ok(true)
+        }
+    }
+
+    /// Returns the en-passant square for a given move. Doesn't check if the move is legal, so
+    /// needs to be done after is_move_legal.
+    pub fn en_passant_square_for_move(&self, mov: &UciMove) -> ChessResult<Option<PieceIndex>> {
+        use Piece::*;
+
+        let source = mov.source;
+        let dest = mov.dest;
+
+        let source_piece = self.at(mov.source)?;
+
+        // If this isn't a pawn move then there isn't an en-passant square.
+        if source_piece == WhitePawn {
+            // If it's a move from the second rank, on the same file, and two spaces, the
+            // en-passant square is in between.
+            if source.0 == 1 && source.1 == dest.1 && dest.0 > source.0 && dest.0 - source.0 == 2 {
+                return Ok(Some((source.0 + 1, source.1)));
+            }
+        }
+
+        if source_piece == BlackPawn {
+            // If it's a move from the second rank, on the same file, and two spaces, the
+            // en-passant square is in between.
+            if source.0 == 6 && source.1 == dest.1 && dest.0 < source.0 && source.0 - dest.0 == 2 {
+                return Ok(Some((source.0 - 1, source.1)));
+            }
+        }
+
+        return Ok(None);
     }
 
     /// Make a move, returning a new position.
@@ -229,15 +352,18 @@ impl Position {
             return Err(ChessError::WrongSide);
         }
 
+        // Check move is otherwise legal for the piece.
+        if !self.is_move_legal(&mov)? {
+            return Err(ChessError::IllegalMove);
+        }
+
         // Check that the destination square doesn't contain one of the player's own pieces (it
         // should either be empty or have an opponent piece to capture.)
+        // TODO: this might not be necessary once is_move_legal is fully implemented.
         let dest_piece = self.at(mov.dest)?;
         if dest_piece.color() == Some(self.side_to_move) {
             return Err(ChessError::DestinationSquareBlocked);
         }
-
-        // TODO: check move is actually valid for the piece, and for the en-passant and castling
-        // state.
 
         // Construct new position with piece moved.
         let mut new_pos = *self;
@@ -246,6 +372,7 @@ impl Position {
         new_pos.set_at(mov.source, EmptySquare)?;
 
         new_pos.side_to_move = if self.side_to_move == Color::White { Color::Black } else { Color::White };
+        new_pos.en_passant_square = self.en_passant_square_for_move(&mov)?;
 
         // TODO: update en-passant and castling state.
 
@@ -271,7 +398,7 @@ impl Default for Position {
         Self {
             pieces,
             side_to_move: Color::White,
-            on_passant_square: None,
+            en_passant_square: None,
             white_can_castle_kingside: true,
             white_can_castle_queenside: true,
             black_can_castle_kingside: true,
@@ -292,6 +419,12 @@ impl std::fmt::Debug for Position {
             }
             writeln!(f, "")?;
         }
+
+        // If there's an en-passant square, print that too.
+        if let Some(en_passant_square) = self.en_passant_square {
+            writeln!(f, "\nEn-passant square: ({}, {})", en_passant_square.0, en_passant_square.1)?;
+        }
+
         Ok(())
     }
 }
@@ -308,7 +441,7 @@ mod tests {
         let pos = Position::default();
 
         assert_eq!(pos.side_to_move, Color::White);
-        assert_eq!(pos.on_passant_square, None);
+        assert_eq!(pos.en_passant_square, None);
         assert_eq!(pos.white_can_castle_kingside, true);
         assert_eq!(pos.white_can_castle_queenside, true);
         assert_eq!(pos.black_can_castle_kingside, true);
@@ -369,6 +502,14 @@ mod tests {
         assert!(UciMove::new("e2e9").is_err());
         assert!(UciMove::new("test").is_err());
         
+        Ok(())
+    }
+
+    // Test making a move.
+    #[test]
+    fn test_make_move() -> ChessResult<()> {
+        // TODO: check all move legalities etc. It's tricky code so it needs to be tested
+        // thoroughly. We need to check all the cases handled in is_move_legal and make_move.
         Ok(())
     }
 }
