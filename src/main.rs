@@ -1,8 +1,10 @@
 pub mod chess;
 
-use chess::Position;
+use std::error::Error;
 
-fn main() {
+use chess::*;
+
+fn main() -> Result<(), Box<dyn Error>> {
     // Initialise logging.
     tracing_subscriber::fmt::init();
 
@@ -14,8 +16,18 @@ fn main() {
     println!("---");
 
     // Get an invalid index.
-    match position.at(0, 0) {
+    match position.at((0, 0)) {
         Ok(piece) => log::info!("Got piece: {piece:?}"),
         Err(e) => log::info!("Got error when accessing piece: {e}"),
     }
+
+    let mov = UciMove::new("e2e4")?;
+    log::info!("ucimove: {:?}", mov);
+
+    let s = position.at(mov.source)?;
+    let d = position.at(mov.dest)?;
+
+    log::info!("source: {s:?}, dest: {d:?}");
+
+    Ok(())
 }
