@@ -14,6 +14,18 @@ pub enum ChessError {
 
     #[error("invalid rank: {0}")]
     InvalidRank(char),
+
+    #[error("there was no piece at the specified coordinates ({0}, {1})")]
+    NoPiece(usize, usize),
+
+    #[error("the piece doesn't belong to the active side")]
+    WrongSide,
+
+    #[error("the destination square was blocked")]
+    DestinationSquareBlocked,
+
+    #[error("the move was illegal")]
+    InvalidMove,
 }
 
 /// Result type for functions in this module.
@@ -68,6 +80,26 @@ impl Piece {
             Piece::BlackBishop => 'b',
             Piece::BlackRook => 'r',
             Piece::BlackPawn => 'p',
+        }
+    }
+
+    fn color(&self) -> Option<Color> {
+        match self {
+            Piece::EmptySquare => None,
+
+            Piece::WhiteKing => Some(Color::White),
+            Piece::WhiteQueen => Some(Color::White),
+            Piece::WhiteKnight => Some(Color::White),
+            Piece::WhiteBishop => Some(Color::White),
+            Piece::WhiteRook => Some(Color::White),
+            Piece::WhitePawn => Some(Color::White),
+
+            Piece::BlackKing => Some(Color::Black),
+            Piece::BlackQueen => Some(Color::Black),
+            Piece::BlackKnight => Some(Color::Black),
+            Piece::BlackBishop => Some(Color::Black),
+            Piece::BlackRook => Some(Color::Black),
+            Piece::BlackPawn => Some(Color::Black),
         }
     }
 }
@@ -169,6 +201,56 @@ impl Position {
             Ok(self.pieces[rank * 8 + file])
         }
     }
+
+    /// Set the piece at a given index.
+    pub fn set_at(&mut self, (rank, file): (usize, usize), piece: Piece) -> ChessResult<()> {
+        if rank >= 8 || file >= 8 {
+            Err(ChessError::InvalidSquareIndex(rank, file))
+        }
+        else {
+            self.pieces[rank * 8 + file] = piece;
+            Ok(())
+        }
+    }
+
+    /// Make a move, returning a new position.
+    pub fn make_move(&self, mov: UciMove) -> ChessResult<Position> {
+        use Piece::*;
+
+        // Check that source square contains a piece from the side to move, and that it belongs to
+        // the side to move.
+        let source_piece = self.at(mov.source)?;
+
+        if source_piece == EmptySquare {
+            return Err(ChessError::NoPiece(mov.source.0, mov.source.1));
+        }
+
+        if source_piece.color() != Some(self.side_to_move) {
+            return Err(ChessError::WrongSide);
+        }
+
+        // Check that the destination square doesn't contain one of the player's own pieces (it
+        // should either be empty or have an opponent piece to capture.)
+        let dest_piece = self.at(mov.dest)?;
+        if dest_piece.color() == Some(self.side_to_move) {
+            return Err(ChessError::DestinationSquareBlocked);
+        }
+
+        // TODO: check move is actually valid for the piece, and for the en-passant and castling
+        // state.
+
+        // Construct new position with piece moved.
+        let mut new_pos = *self;
+
+        new_pos.set_at(mov.dest, source_piece)?;
+        new_pos.set_at(mov.source, EmptySquare)?;
+
+        new_pos.side_to_move = if self.side_to_move == Color::White { Color::Black } else { Color::White };
+
+        // TODO: update en-passant and castling state.
+
+        Ok(new_pos)
+    }
 }
 
 impl Default for Position {
@@ -176,14 +258,14 @@ impl Default for Position {
         use Piece::*;
 
         let pieces = [
-            WhiteRook, WhiteKnight, WhiteBishop, WhiteQueen, WhiteKing, WhiteBishop, WhiteKnight, WhiteRook,
-            WhitePawn, WhitePawn, WhitePawn, WhitePawn, WhitePawn, WhitePawn, WhitePawn, WhitePawn,
+            WhiteRook,   WhiteKnight, WhiteBishop, WhiteQueen,  WhiteKing,   WhiteBishop, WhiteKnight, WhiteRook,
+            WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,
             EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare,
             EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare,
             EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare,
             EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare,
-            BlackPawn, BlackPawn, BlackPawn, BlackPawn, BlackPawn, BlackPawn, BlackPawn, BlackPawn,
-            BlackRook, BlackKnight, BlackBishop, BlackQueen, BlackKing, BlackBishop, BlackKnight, BlackRook,
+            BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,
+            BlackRook,   BlackKnight, BlackBishop, BlackQueen,  BlackKing,   BlackBishop, BlackKnight, BlackRook,
         ];
 
         Self {
