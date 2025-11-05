@@ -9,6 +9,12 @@ pub enum ChessError {
     #[error("invalid UCI notation: {0}")]
     InvalidUciNotation(String),
 
+    #[error("invalid piece notation: {0}")]
+    InvalidPieceNotation(char),
+
+    #[error("not enough pieces")]
+    NotEnoughPieces,
+
     #[error("invalid file: {0}")]
     InvalidFile(char),
 
@@ -67,7 +73,31 @@ pub enum Piece {
 }
 
 impl Piece {
-    fn fen_fmt(&self) -> char {
+    fn from_char(c: char) -> ChessResult<Self> {
+        use Piece::*;
+
+        match c {
+            '.' => Ok(EmptySquare),
+
+            'K' => Ok(WhiteKing),
+            'Q' => Ok(WhiteQueen),
+            'N' => Ok(WhiteKnight),
+            'B' => Ok(WhiteBishop),
+            'R' => Ok(WhiteRook),
+            'P' => Ok(WhitePawn),
+
+            'k' => Ok(BlackKing),
+            'q' => Ok(BlackQueen),
+            'n' => Ok(BlackKnight),
+            'b' => Ok(BlackBishop),
+            'r' => Ok(BlackRook),
+            'p' => Ok(BlackPawn),
+
+            _ => Err(ChessError::InvalidPieceNotation(c))
+        }
+    }
+
+    fn to_char(&self) -> char {
         match self {
             Piece::EmptySquare => '.',
 
@@ -195,6 +225,57 @@ pub struct Position {
 }
 
 impl Position {
+    /// Create a new position from a visual (string) representation.
+    /// For example, for the default position:
+    /// "
+    /// rnbqkbnr
+    /// pppppppp
+    /// ........
+    /// ........
+    /// ........
+    /// ........
+    /// PPPPPPPP
+    /// RNBQKBNR
+    /// "
+    /// Whitespace and line breaks are dropped from the input, and the remaining characters must
+    /// number at least 64, and be a valid piece (uppercase for white, lowercase for black, and '.'
+    /// for an empty square.) To visually resemble a chess board, a8 is the 1st element, and h1 is
+    /// the 64th.
+    pub fn from_visual(
+        board: &str,
+        side_to_move: Color,
+        en_passant_square: Option<PieceIndex>,
+        white_can_castle_kingside: bool,
+        white_can_castle_queenside: bool,
+        black_can_castle_kingside: bool,
+        black_can_castle_queenside: bool,
+    ) -> ChessResult<Position>
+    {
+        // Parse pieces to 64 Piece values.
+        let pieces: Vec<Piece> = board.chars()
+            // Filter out whitespace and linebreaks.
+            .filter(|c| *c != ' ' && *c != '\r' && *c != '\n')
+            // Convert from char to Piece.
+            .map(Piece::from_char)
+            // Flatten the results.
+            .flatten()
+            // Collect into a Vec<Piece>.
+            .collect();
+
+        // Convert the Vec<Piece> to a [Piece; 64], or an error if there aren't enough elements.
+        let pieces: [Piece; 64] = pieces.try_into().map_err(|_| ChessError::NotEnoughPieces)?;
+
+        Ok(Position {
+            pieces,
+            side_to_move,
+            en_passant_square,
+            white_can_castle_kingside,
+            white_can_castle_queenside,
+            black_can_castle_kingside,
+            black_can_castle_queenside
+        })
+    }
+
     /// Access a square by index (rank and then file, as in algebraic notation). Out of bounds
     /// indices will return an InvalidSquareIndex error.
     pub fn at(&self, (rank, file): PieceIndex) -> ChessResult<Piece> {
@@ -382,28 +463,23 @@ impl Position {
 
 impl Default for Position {
     fn default() -> Self {
-        use Piece::*;
-
-        let pieces = [
-            WhiteRook,   WhiteKnight, WhiteBishop, WhiteQueen,  WhiteKing,   WhiteBishop, WhiteKnight, WhiteRook,
-            WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,   WhitePawn,
-            EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare,
-            EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare,
-            EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare,
-            EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare, EmptySquare,
-            BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,   BlackPawn,
-            BlackRook,   BlackKnight, BlackBishop, BlackQueen,  BlackKing,   BlackBishop, BlackKnight, BlackRook,
-        ];
-
-        Self {
-            pieces,
-            side_to_move: Color::White,
-            en_passant_square: None,
-            white_can_castle_kingside: true,
-            white_can_castle_queenside: true,
-            black_can_castle_kingside: true,
-            black_can_castle_queenside: true,
-        }
+        Self::from_visual(
+            "
+            rnbqkbnr
+            pppppppp
+            ........
+            ........
+            ........
+            ........
+            PPPPPPPP
+            RNBQKBNR",
+            Color::White,
+            None,
+            true,
+            true,
+            true,
+            true)
+            .expect("Invalid default position")
     }
 }
 
@@ -415,7 +491,7 @@ impl std::fmt::Debug for Position {
         // Iterate the ranks as chunks.
         for rank in self.pieces.chunks(8).rev() {
             for piece in rank {
-                write!(f, "{}", piece.fen_fmt())?;
+                write!(f, "{}", piece.to_char())?;
             }
             writeln!(f, "")?;
         }

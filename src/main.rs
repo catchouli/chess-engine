@@ -14,7 +14,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Play a two-player game.
     play_two_player_game(position)?;
 
-
     // Get an invalid index.
     match position.at((0, 0)) {
         Ok(piece) => log::info!("Got piece: {piece:?}"),
