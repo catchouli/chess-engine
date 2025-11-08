@@ -522,7 +522,8 @@ impl Position {
 
     /// Check if the given move is a valid queen move.
     fn is_valid_queen_move(&self, source: SquareIndex, dest: SquareIndex) -> ChessResult<bool> {
-        Ok(false)
+        return Ok(self.is_valid_bishop_move(source, dest)?
+            || self.is_valid_rook_move(source, dest)?);
     }
 
     /// Check if the given move is a valid king move.
