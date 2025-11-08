@@ -263,7 +263,17 @@ impl Position {
             .collect();
 
         // Convert the Vec<Piece> to a [Piece; 64], or an error if there aren't enough elements.
-        let pieces: [Piece; 64] = pieces.try_into().map_err(|_| ChessError::NotEnoughPieces)?;
+        let pieces: [Piece; 64] = pieces
+            // Kinda annoying, I realised that the ranks actually need transposing as the black
+            // pieces are at the top in the visual representation but our internal indexing starts
+            // with the white pieces.
+            .chunks(8).rev().flatten()
+            .map(|p| *p)
+            .collect::<Vec<_>>()
+            // Convert from Vec<Piece> to [Piece; 64], returning an error if there aren't enough
+            // pieces.
+            .try_into()
+            .map_err(|_| ChessError::NotEnoughPieces)?;
 
         Ok(Position {
             pieces,
@@ -330,13 +340,15 @@ impl Position {
         }
 
         // Get the opposite color.
-        let opposite_color = if self.side_to_move == Color::White { Color::Black } else { Color::White };
+        let opposite_color =
+            if self.side_to_move == Color::White { Color::Black } else { Color::White };
 
         // Check move validity.
         match source_piece {
             WhitePawn | BlackPawn => {
                 // The passing rank (the one right in front of a pawn).
-                let passing_rank = if self.side_to_move == Color::White { source.0 + 1 } else { source.0 - 1 };
+                let passing_rank =
+                    if self.side_to_move == Color::White { source.0 + 1 } else { source.0 - 1 };
 
                 // Pawns can never move from the 1st or 8th rank. This also prevents some overflows
                 // later.
@@ -344,10 +356,11 @@ impl Position {
                     // Check moves along the same file (regular moves).
                     if source.1 == dest.1 {
                         let move_dist = dest.0 as i32 - source.0 as i32;
-                        let relative_move_dist = if self.side_to_move == Color::White { move_dist } else { -move_dist };
+                        let relative_move_dist =
+                            if self.side_to_move == Color::White { move_dist } else { -move_dist };
 
-                        // It should be possible to move one square forward, as long as the destination
-                        // square is unobstructed.
+                        // It should be possible to move one square forward, as long as the
+                        // destination square is unobstructed.
                         if relative_move_dist == 1 && self.at(dest)? == EmptySquare {
                             return Ok(true);
                         }
@@ -356,7 +369,9 @@ impl Position {
                         // squares are unobstructed.
                         if relative_move_dist == 2 {
                             let passing_square = (passing_rank, source.1);
-                            if self.at(dest)? == EmptySquare && self.at(passing_square)? == EmptySquare {
+                            if self.at(dest)? == EmptySquare
+                                && self.at(passing_square)? == EmptySquare
+                            {
                                 return Ok(true);
                             }
                         }
@@ -365,7 +380,9 @@ impl Position {
                     // Check captures to the left.
                     if source.1 > 0 && dest.1 == source.1 - 1 && dest.0 == passing_rank {
                         // Check that the square contains an opponent's piece.
-                        if self.at(dest)?.color() == Some(opposite_color) || self.en_passant_square == Some(dest) {
+                        if self.at(dest)?.color() == Some(opposite_color)
+                            || self.en_passant_square == Some(dest)
+                        {
                             return Ok(true);
                         }
                     }
@@ -373,7 +390,9 @@ impl Position {
                     // Check captures to the right.
                     if source.1 < 7 && dest.1 == source.1 + 1 && dest.0 == passing_rank {
                         // Check that the square contains an opponent's piece.
-                        if self.at(dest)?.color() == Some(opposite_color) || self.en_passant_square == Some(dest) {
+                        if self.at(dest)?.color() == Some(opposite_color)
+                            || self.en_passant_square == Some(dest)
+                        {
                             return Ok(true);
                         }
                     }
@@ -455,7 +474,20 @@ impl Position {
         new_pos.side_to_move = if self.side_to_move == Color::White { Color::Black } else { Color::White };
         new_pos.en_passant_square = self.en_passant_square_for_move(&mov)?;
 
-        // TODO: update en-passant and castling state.
+        // If the source pieces is a pawn, and is moving to the en-passant square, we need to
+        // remove the pawn it's taking.
+        if Some(mov.dest) == self.en_passant_square {
+            if source_piece == WhitePawn {
+                let capture_square = (mov.dest.0-1, mov.dest.1);
+                new_pos.set_at(capture_square, EmptySquare)?;
+            }
+            else if source_piece == BlackPawn {
+                let capture_square = (mov.dest.0+1, mov.dest.1);
+                new_pos.set_at(capture_square, EmptySquare)?;
+            }
+        }
+
+        // TODO: update castling state.
 
         Ok(new_pos)
     }
