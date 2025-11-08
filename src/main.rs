@@ -11,6 +11,19 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Construct default position.
     let position = Position::default();
 
+    // Construct debug position.
+    let position = Position::from_visual(
+        "
+        rnbqkbnr
+        .ppppppp
+        ....P...
+        ........
+        p.......
+        ........
+        PPPP.PPP
+        RNBQKBNR
+        ", Color::White, None, true, true, true, true)?;
+
     // Play a two-player game.
     play_two_player_game(position)?;
 
