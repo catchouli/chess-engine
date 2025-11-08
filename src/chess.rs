@@ -29,6 +29,12 @@ pub enum ChessError {
 
     #[error("the move was illegal")]
     IllegalMove,
+
+    #[error("internal error: the given straight line move was not along a straight line")]
+    InvalidStraightLineMove,
+
+    #[error("internal error: the given diagonal move was not along a diagonal")]
+    InvalidDiagonalMove,
 }
 
 /// Result type for functions in this module.
@@ -38,6 +44,11 @@ pub type ChessResult<T> = Result<T, ChessError>;
 /// part of this setup, but it's the simplest way, so we just have to check it's legal when we use
 /// it.
 pub type SquareIndex = (usize, usize);
+
+/// Convert SquareIndex to signed representation.
+fn to_signed(idx: &SquareIndex) -> (i32, i32) {
+    (idx.0 as i32, idx.1 as i32)
+}
 
 /// An enum for representing the color of each side.
 #[repr(u8)]
@@ -447,8 +458,12 @@ impl Position {
 
     /// Check if the given move is a valid rook move.
     fn is_valid_rook_move(&self, source: SquareIndex, dest: SquareIndex) -> ChessResult<bool> {
+        // Convert source and dest to signed numbers.
+        let signed_source = to_signed(&source);
+        let signed_dest = to_signed(&dest);
+
         // Calculate algebraic move distance (e.g. (2, 1), (1, 1), etc).
-        let move_dist = (dest.0 - source.0, dest.1 - source.1);
+        let move_dist = (signed_dest.0 - signed_source.0, signed_dest.1 - signed_source.1);
 
         // One of the dimensions should be 0, or it's not a valid rook move.
         if move_dist.0 != 0 && move_dist.1 != 0 {
@@ -460,7 +475,18 @@ impl Position {
             return Ok(false);
         }
 
-        Ok(false)
+        // Check that the destination square is either unobstructed or an enemy piece.
+        let dest_piece = self.at(dest)?;
+        if dest_piece != Piece::EmptySquare
+            && dest_piece.color() != Some(self.side_to_move.flip())
+        {
+            return Ok(false)
+        }
+
+        // Check whether the line between the source and destination squares is obstructed.
+        let is_line_obstructed = self.is_straight_line_obstructed(source, dest)?;
+
+        Ok(!is_line_obstructed)
     }
 
     /// Check if the given move is a valid bishop move.
@@ -475,6 +501,41 @@ impl Position {
 
     /// Check if the given move is a valid king move.
     fn is_valid_king_move(&self, source: SquareIndex, dest: SquareIndex) -> ChessResult<bool> {
+        Ok(false)
+    }
+
+    /// Check if the given straight line (not diagonal) move is obstructed, not including the
+    /// source and destination square.
+    fn is_straight_line_obstructed(&self, source: SquareIndex, dest: SquareIndex) -> ChessResult<bool> {
+        // Convert source and dest to signed numbers.
+        let source = to_signed(&source);
+        let dest = to_signed(&dest);
+
+        // Calculate algebraic move distance (e.g. (2, 1), (1, 1), etc).
+        let move_dist = (dest.0 - source.0, dest.1 - source.1);
+
+        // Check that one of the axes is 0.
+        if move_dist.0 != 0 && move_dist.1 != 0 {
+            return Err(ChessError::InvalidStraightLineMove);
+        }
+
+        // Calculate step.
+        let step = (move_dist.0.signum(), move_dist.1.signum());
+
+        // Step every square in between to check for obstructions.
+        let mut square = (source.0 + step.0, source.1 + step.1);
+        while square != dest {
+            let square_index = (square.0 as usize, square.1 as usize);
+
+            if self.at(square_index)? != Piece::EmptySquare {
+                log::info!("Found obstruction on {square_index:?}");
+                return Ok(true)
+            }
+
+            // Step to next square.
+            square = (square.0 + step.0, square.1 + step.1);
+        }
+
         Ok(false)
     }
 
