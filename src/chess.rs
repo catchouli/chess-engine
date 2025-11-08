@@ -329,6 +329,9 @@ impl Position {
     /// TODO: Some of the code is a bit nasty, it might be worth simplifying it if possible once
     /// it's implemented.
     /// TODO: support castling.
+    /// TODO: needs test cases, but it turned out to be trickier to write than I expected, so I'm
+    /// just implementing it fully first. There's probably some stuff in there that'll go wrong
+    /// though without robust test cases...
     pub fn is_move_legal(&self, mov: &UciMove) -> ChessResult<bool> {
         use Piece::*;
 
@@ -491,7 +494,30 @@ impl Position {
 
     /// Check if the given move is a valid bishop move.
     fn is_valid_bishop_move(&self, source: SquareIndex, dest: SquareIndex) -> ChessResult<bool> {
-        Ok(false)
+        // Convert source and dest to signed numbers.
+        let signed_source = to_signed(&source);
+        let signed_dest = to_signed(&dest);
+
+        // Calculate algebraic move distance (e.g. (2, 1), (1, 1), etc).
+        let move_dist = (signed_dest.0 - signed_source.0, signed_dest.1 - signed_source.1);
+
+        // Check it's a diagonal move, in which case both axes should have the same value.
+        if move_dist.0.abs() != move_dist.1.abs() {
+            return Ok(false);
+        }
+
+        // Check that the destination square is either unobstructed or an enemy piece.
+        let dest_piece = self.at(dest)?;
+        if dest_piece != Piece::EmptySquare
+            && dest_piece.color() != Some(self.side_to_move.flip())
+        {
+            return Ok(false)
+        }
+
+        // Check whether the line between the source and destination squares is obstructed.
+        let is_line_obstructed = self.is_diagonal_line_obstructed(source, dest)?;
+
+        Ok(!is_line_obstructed)
     }
 
     /// Check if the given move is a valid queen move.
@@ -514,6 +540,11 @@ impl Position {
         // Calculate algebraic move distance (e.g. (2, 1), (1, 1), etc).
         let move_dist = (dest.0 - source.0, dest.1 - source.1);
 
+        // Check that the overall move distance isn't 0.
+        if move_dist.0 == 0 && move_dist.1 == 0 {
+            return Err(ChessError::InvalidStraightLineMove);
+        }
+
         // Check that one of the axes is 0.
         if move_dist.0 != 0 && move_dist.1 != 0 {
             return Err(ChessError::InvalidStraightLineMove);
@@ -528,7 +559,44 @@ impl Position {
             let square_index = (square.0 as usize, square.1 as usize);
 
             if self.at(square_index)? != Piece::EmptySquare {
-                log::info!("Found obstruction on {square_index:?}");
+                return Ok(true)
+            }
+
+            // Step to next square.
+            square = (square.0 + step.0, square.1 + step.1);
+        }
+
+        Ok(false)
+    }
+
+    /// Check if the given diagonal line is obstructed, not including the source and destination square.
+    fn is_diagonal_line_obstructed(&self, source: SquareIndex, dest: SquareIndex) -> ChessResult<bool> {
+        // Convert source and dest to signed numbers.
+        let source = to_signed(&source);
+        let dest = to_signed(&dest);
+
+        // Calculate algebraic move distance (e.g. (2, 1), (1, 1), etc).
+        let move_dist = (dest.0 - source.0, dest.1 - source.1);
+
+        // Check that the overall move distance isn't 0.
+        if move_dist.0 == 0 && move_dist.1 == 0 {
+            return Err(ChessError::InvalidDiagonalMove);
+        }
+
+        // Check that both axes are the same absolute value, in which case it's a diagonal move.
+        if move_dist.0.abs() != move_dist.1.abs() {
+            return Err(ChessError::InvalidDiagonalMove);
+        }
+
+        // Calculate step.
+        let step = (move_dist.0.signum(), move_dist.1.signum());
+
+        // Step every square in between to check for obstructions.
+        let mut square = (source.0 + step.0, source.1 + step.1);
+        while square != dest {
+            let square_index = (square.0 as usize, square.1 as usize);
+
+            if self.at(square_index)? != Piece::EmptySquare {
                 return Ok(true)
             }
 

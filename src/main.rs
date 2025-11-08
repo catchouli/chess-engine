@@ -15,14 +15,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let position = Position::from_visual(
         "
         rnbqkbnr
-        .ppppppp
+        .pp.pppp
         ....P...
         ........
         p.......
         ........
-        .PPP.PPP
+        .PP..PPP
         RNBQKBNR
-        ", Color::White, None, true, true, true, true)?;
+        ", Color::Black, None, true, true, true, true)?;
 
     // Play a two-player game.
     play_two_player_game(position)?;
