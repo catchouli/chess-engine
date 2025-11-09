@@ -360,6 +360,7 @@ impl Position {
         }
 
         // Check move validity.
+        // TODO: we also need to check that the final position isn't check.
         match source_piece {
             WhitePawn | BlackPawn => self.is_valid_pawn_move(source, dest),
             WhiteKnight | BlackKnight => self.is_valid_knight_move(source, dest),
@@ -528,7 +529,143 @@ impl Position {
 
     /// Check if the given move is a valid king move.
     fn is_valid_king_move(&self, source: SquareIndex, dest: SquareIndex) -> ChessResult<bool> {
+        let dest_orig = dest;
+
+        // Convert source and dest to signed numbers.
+        let source = to_signed(&source);
+        let dest = to_signed(&dest);
+
+        // Calculate algebraic move distance (e.g. (2, 1), (1, 1), etc).
+        let move_dist = (dest.0 - source.0, dest.1 - source.1);
+
+        // The move can't be 0-distance.
+        if move_dist.0 == 0 && move_dist.0 == 1 {
+            return Ok(false);
+        }
+
+        // As long as the absolute value of each is 1 or 0, it could be a legal king move (one
+        // space in any direction).
+        if move_dist.0.abs() > 1 || move_dist.1.abs() > 1 {
+            return Ok(false);
+        }
+
+        // Check that the destination square is either unobstructed or an enemy piece.
+        let dest_piece = self.at(dest_orig)?;
+        if dest_piece != Piece::EmptySquare
+            && dest_piece.color() != Some(self.side_to_move.flip())
+        {
+            return Ok(false);
+        }
+
+        // Make sure no enemy pieces can see the destination square, in which case it would put the
+        // king into check.
+        if self.can_any_pieces_see_square(self.side_to_move.flip(), dest_orig)? {
+            return Ok(false);
+        }
+
+        Ok(true)
+    }
+
+    /// Check whether any pieces of the given color can see the given square (i.e. to check for
+    /// checks).
+    fn can_any_pieces_see_square(&self, color: Color, square: SquareIndex) -> ChessResult<bool> {
+        for rank in 0..8 as usize {
+            for file in 0..8 as usize {
+                let source = (rank, file);
+                let piece = self.at(source)?;
+
+                if piece.color() != Some(color) {
+                    continue;
+                }
+
+                if self.can_piece_see_square(source, square)? {
+                    return Ok(true);
+                }
+            }
+        }
+
         Ok(false)
+    }
+
+    /// Check whether the given piece can see the given square. This is effectively like checking
+    /// if the move is valid, but not taking into account whether the destination square is
+    /// obstructed, as it's used for checks and the like.
+    /// TODO: These functions can probably be refactored somehow to simplify/combine them.
+    fn can_piece_see_square(&self, source: SquareIndex, dest: SquareIndex) -> ChessResult<bool> {
+        use Piece::*;
+
+        let piece = self.at(source)?;
+
+        match piece {
+            // White pawns can see diagonally in front of them.
+            WhitePawn => {
+                let is_rank_in_front_of = dest.0 == source.0 + 1;
+                let is_left_of = dest.1 + 1 == source.1;
+                let is_right_of = dest.1 == source.1 + 1;
+
+                Ok(is_rank_in_front_of && (is_left_of || is_right_of))
+            },
+
+            // Black pawns can see diagonally in front of them, but the direction is reversed.
+            BlackPawn => {
+                let is_rank_in_front_of = dest.0 + 1 == source.0;
+                let is_left_of = dest.1 + 1 == source.1;
+                let is_right_of = dest.1 == source.1 + 1;
+
+                Ok(is_rank_in_front_of && (is_left_of || is_right_of))
+            },
+
+            // For knights, if the piece is (2,1) or (1,2) away, then it can see the square.
+            WhiteKnight | BlackKnight => {
+                let move_dist_abs = (dest.0.abs_diff(source.0), dest.1.abs_diff(source.1));
+                
+                Ok(move_dist_abs == (1,2) || move_dist_abs == (2,1))
+            },
+
+            // For rooks, if the straight line between the source and destination square is
+            // unobstructed, the rook can see the square.
+            WhiteRook | BlackRook => {
+                let is_on_same_rank_or_file = source.0 == dest.0 || source.1 == dest.1;
+
+                Ok(is_on_same_rank_or_file && !self.is_straight_line_obstructed(source, dest)?)
+            },
+
+            // For bishops, if the diagonal between the source and destination square is
+            // unobstructed, the rook can see the square.
+            WhiteBishop | BlackBishop => {
+                let move_dist_abs = (dest.0.abs_diff(source.0), dest.1.abs_diff(source.1));
+                let is_on_same_diagonal = move_dist_abs.0 == move_dist_abs.1;
+
+                Ok(is_on_same_diagonal && !self.is_diagonal_line_obstructed(source, dest)?)
+            },
+
+            // For queens, it's the same as rook + bishop.
+            WhiteQueen | BlackQueen => {
+                let is_on_same_rank_or_file = source.0 == dest.0 || source.1 == dest.1;
+
+                let move_dist_abs = (dest.0.abs_diff(source.0), dest.1.abs_diff(source.1));
+                let is_on_same_diagonal = move_dist_abs.0 == move_dist_abs.1;
+
+                let can_see_straight = is_on_same_rank_or_file
+                    && !self.is_straight_line_obstructed(source, dest)?;
+                let can_see_diagonally = is_on_same_diagonal
+                    && !self.is_diagonal_line_obstructed(source, dest)?;
+
+                Ok(can_see_straight || can_see_diagonally)
+            },
+
+            // For kings, they can see any square immediately adjacent (0 or 1 away in each axis).
+            WhiteKing | BlackKing => {
+                let move_dist_abs = (dest.0.abs_diff(source.0), dest.1.abs_diff(source.1));
+
+                let is_same_square = move_dist_abs.0 == 0 && move_dist_abs.1 == 0;
+                let is_within_reach = move_dist_abs.0 <= 1 && move_dist_abs.1 <= 1;
+
+                Ok(!is_same_square && is_within_reach)
+            },
+
+            _ => Ok(false)
+        }
     }
 
     /// Check if the given straight line (not diagonal) move is obstructed, not including the
