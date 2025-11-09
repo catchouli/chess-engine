@@ -123,7 +123,7 @@ fn play_one_player_game(initial_pos: Position, user_side: Color) -> Result<(), B
         else {
             println!("{:?} move (computer)...", pos.side_to_move);
 
-            let computer_move = engine::evaluate_position(&pos);
+            let computer_move = engine::evaluate_position(&pos)?;
 
             pos= pos.make_move(computer_move)
                 .expect("Computer made invalid move");

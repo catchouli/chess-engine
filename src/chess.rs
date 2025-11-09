@@ -1,3 +1,7 @@
+// Implementation of chess logic. This probably isn't the best or clearest way to do it, as I'm
+// still figuring it out, and it was more complex than I imagined. Some things need cleaning up as
+// a result, and could probably be made simpler or more robust.
+
 use thiserror::Error;
 
 /// Error type for functions in this module.
@@ -43,6 +47,9 @@ pub type ChessResult<T> = Result<T, ChessError>;
 /// Type for representing piece indexes, (rank, file) indexed from 0 to 7. Probably the least safe
 /// part of this setup, but it's the simplest way, so we just have to check it's legal when we use
 /// it.
+/// TODO: using usize here instead of i32 turned out to make a bunch of the code more complex,
+/// because we have to worry about overflows. It would be better just to change it to (i32, i32) I
+/// think.
 pub type SquareIndex = (usize, usize);
 
 /// Convert SquareIndex to signed representation.
@@ -153,10 +160,253 @@ impl Piece {
             Piece::BlackPawn => Some(Color::Black),
         }
     }
+
+    /// Compute possible moves for the given piece, given the source square. This doesn't take into
+    /// account that they might not be legal moves - those are checked later.
+    fn collect_possible_moves(&self, source: SquareIndex, vec: &mut Vec<UciMove>) {
+        match self {
+            // White pawns can move forward, and capture either left or right.
+            Piece::WhitePawn => {
+                if source.0 < 7 {
+                    // Move straight ahead.
+                    vec.push(UciMove {
+                        source,
+                        dest: (source.0 + 1, source.1),
+                    });
+
+                    // Capture to the left.
+                    if source.1 > 0 {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 + 1, source.1 - 1),
+                        });
+                    }
+
+                    // Capture to the right.
+                    if source.1 < 7 {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 + 1, source.1 + 1),
+                        });
+                    }
+                }
+            },
+
+            // Black pawns can move forward, and capture either left or right.
+            Piece::BlackPawn => {
+                if source.0 > 0 {
+                    // Move straight ahead.
+                    vec.push(UciMove {
+                        source,
+                        dest: (source.0 - 1, source.1),
+                    });
+
+                    // Capture to the left.
+                    if source.1 > 0 {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 - 1, source.1 - 1),
+                        });
+                    }
+
+                    // Capture to the right.
+                    if source.1 < 7 {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 - 1, source.1 + 1),
+                        });
+                    }
+                }
+            },
+
+            // Knights can move (1,2) in any direction.
+            Piece::WhiteKnight | Piece::BlackKnight => {
+                // Bit ugly this, I think using i32 instead of usize for SquareIndex would make it
+                // a bit simpler. Because it's usize, we have to worry about overflows, whereas it
+                // really doesn't matter as we end up checking the move for legality anyway.
+                let possible_moves = [
+                    (2, 1),
+                    (1, 2),
+                    (-2, 1),
+                    (-1, 2),
+                    (2, -1),
+                    (1, -2),
+                    (-2, -1),
+                    (-1, -2),
+                ];
+
+                for (x, y) in possible_moves {
+                    let dest_x = source.0 as i32 + x;
+                    let dest_y = source.1 as i32 + y;
+
+                    if dest_x >= 0 && dest_y >= 0 {
+                        vec.push(UciMove {
+                            source,
+                            dest: (dest_x as usize, dest_y as usize),
+                        });
+                    }
+                }
+            },
+
+            // Rooks can move in a straight line up to 8 squares.
+            Piece::WhiteRook | Piece::BlackRook => {
+                for i in 1..8 {
+                    // Move i squares in each direction.
+                    vec.push(UciMove {
+                        source,
+                        dest: (source.0 + i, source.1),
+                    });
+
+                    if source.0 >= i {
+                        let mov = UciMove {
+                            source,
+                            dest: (source.0 - i, source.1),
+                        };
+                        log::info!("rook mov {mov:?}");
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 - i, source.1),
+                        });
+                    }
+
+                    vec.push(UciMove {
+                        source,
+                        dest: (source.0, source.1 + i),
+                    });
+
+                    if source.1 >= i {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0, source.1 - i),
+                        });
+                    }
+                }
+            },
+
+            // Bishops can move diagonally up to 8 squares.
+            Piece::WhiteBishop | Piece::BlackBishop => {
+                for i in 1..8 {
+                    // Move i squares in each direction.
+                    vec.push(UciMove {
+                        source,
+                        dest: (source.0 + i, source.1 + i),
+                    });
+
+                    if source.0 >= i {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 - i, source.1 + i),
+                        });
+                    }
+
+                    if source.1 >= i {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 + i, source.1 - i),
+                        });
+                    }
+
+                    if source.0 >= i && source.1 >= i {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 - i, source.1 - i),
+                        });
+                    }
+                }
+            },
+
+            // Queens can move straight or diagonally up to 8 squares.
+            Piece::WhiteQueen | Piece::BlackQueen => {
+                for i in 1..8 {
+                    // Move i squares in each direction straight.
+                    vec.push(UciMove {
+                        source,
+                        dest: (source.0 + i, source.1),
+                    });
+
+                    if source.0 >= i {
+                        let mov = UciMove {
+                            source,
+                            dest: (source.0 - i, source.1),
+                        };
+                        log::info!("rook mov {mov:?}");
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 - i, source.1),
+                        });
+                    }
+
+                    vec.push(UciMove {
+                        source,
+                        dest: (source.0, source.1 + i),
+                    });
+
+                    if source.1 >= i {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0, source.1 - i),
+                        });
+                    }
+
+                    // Move i squares in each direction diagonally.
+                    vec.push(UciMove {
+                        source,
+                        dest: (source.0 + i, source.1 + i),
+                    });
+
+                    if source.0 >= i {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 - i, source.1 + i),
+                        });
+                    }
+
+                    if source.1 >= i {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 + i, source.1 - i),
+                        });
+                    }
+
+                    if source.0 >= i && source.1 >= i {
+                        vec.push(UciMove {
+                            source,
+                            dest: (source.0 - i, source.1 - i),
+                        });
+                    }
+                }
+            },
+
+            // Kings can move one space in each direction.
+            Piece::WhiteKing | Piece::BlackKing => {
+                for x in -1..=1 {
+                    for y in -1..=1 {
+                        if x == 0 && y == 0 {
+                            continue;
+                        }
+
+                        let dest_x = source.0 as i32 + x;
+                        let dest_y = source.1 as i32 + y;
+
+                        if dest_x >= 0 && dest_y >= 0 {
+                            let dest = (dest_x as usize, dest_y as usize);
+
+                            vec.push(UciMove {
+                                source,
+                                dest,
+                            });
+                        }
+                    }
+                }
+            },
+
+            _ => {}
+        }
+    }
 }
 
 /// A type represeting a move, in UCI format. A little unsafe if you construct it manually.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct UciMove {
     /// Index of the source square in the order (rank, file).
     pub source: SquareIndex,
@@ -340,16 +590,16 @@ impl Position {
 
         // Check index validity.
         if source.0 > 7 {
-            return Err(ChessError::InvalidSquareIndex(source.0, source.1));
+            return Ok(false);
         }
         if source.1 > 7 {
-            return Err(ChessError::InvalidSquareIndex(source.0, source.1));
+            return Ok(false);
         }
         if dest.0 > 7 {
-            return Err(ChessError::InvalidSquareIndex(dest.0, dest.1));
+            return Ok(false);
         }
         if dest.1 > 7 {
-            return Err(ChessError::InvalidSquareIndex(dest.0, dest.1));
+            return Ok(false);
         }
 
         // Get source piece.
@@ -821,6 +1071,34 @@ impl Position {
         // TODO: update castling state.
 
         Ok(new_pos)
+    }
+
+    /// Generate a list of legal moves for the position.
+    pub fn legal_moves(&self) -> ChessResult<Vec<UciMove>> {
+        // Find all pieces of the color to move, and generate possible moves for them.
+        let mut possible_moves = Vec::new();
+
+        for rank in 0..=7 {
+            for file in 0..=7 {
+                let square = (rank, file);
+                let piece = self.at(square)?;
+
+                if piece.color() == Some(self.side_to_move) {
+                    piece.collect_possible_moves(square, &mut possible_moves);
+                }
+            }
+        }
+
+        // Filter out illegal moves.
+        let mut moves = Vec::new();
+
+        for mov in possible_moves {
+            if self.is_move_legal(&mov)? {
+                moves.push(mov);
+            }
+        }
+
+        Ok(moves)
     }
 }
 
