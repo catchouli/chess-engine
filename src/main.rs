@@ -1,5 +1,6 @@
 pub mod chess;
 pub mod engine;
+pub mod bitboard;
 
 use std::error::Error;
 
@@ -8,6 +9,24 @@ use chess::*;
 fn main() -> Result<(), Box<dyn Error>> {
     // Initialise logging.
     tracing_subscriber::fmt::init();
+
+    // Construct debug position.
+    let position = bitboard::Position::from_visual(
+        "
+        rnbqkbnr
+        pppppppp
+        ........
+        ........
+        ........
+        ........
+        PPPPPPPP
+        RNBQKBNR
+        ")?;
+
+    // Debug print it.
+    println!("{position:?}");
+
+    return Ok(());
 
     // Construct default position.
     let position = Position::default();

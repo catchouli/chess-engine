@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Error type for functions in this module.
 #[derive(Debug, Error)]
 pub enum ChessError {
+    #[error("the input was of invalid length {0}, required: {1}")]
+    InvalidInputLength(usize, usize),
+
     #[error("the supplied square index ({0}, {1}) was invalid")]
     InvalidSquareIndex(usize, usize),
 
